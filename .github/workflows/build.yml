@@ -13,15 +13,7 @@ env:
 
 jobs:
   build:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        include:
-          - platform: x64
-            msbuild_platform: x64
-          - platform: x86
-            msbuild_platform: Win32
-
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,23 +24,25 @@ jobs:
 
       - uses: microsoft/setup-msbuild@v2
 
-      - name: Build Release ${{ matrix.platform }}
+      - name: Build Release x64
         shell: cmd
-        run: msbuild OptiScaler.sln /p:Configuration=Release /p:Platform=${{ matrix.msbuild_platform }} /m
+        run: msbuild OptiScaler.sln /p:Configuration=Release /p:Platform=x64 /m
 
       - uses: actions/upload-artifact@v4
         with:
-          name: OptiScaler-${{ matrix.platform }}
-          path: OptiScaler\bin\${{ matrix.platform }}-Release\*
+          name: OptiScaler-x64
+          path: |
+            x64\Release\a\*
+            x64\Release\*.dll
+            x64\Release\*.pdb
           compression-level: 9
 
   release:
     needs: build
     if: always() && needs.build.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
-
     steps:
       - uses: actions/download-artifact@v4
 
