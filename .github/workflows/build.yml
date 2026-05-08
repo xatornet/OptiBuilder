@@ -14,6 +14,9 @@ env:
 jobs:
   build:
     runs-on: windows-2025
+    outputs:
+      commit_sha: ${{ steps.commit.outputs.sha }}
+      commit_msg: ${{ steps.commit.outputs.msg }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,7 +25,27 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Get commit info
+        id: commit
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "msg=$(git log -1 --format=%s)" >> $GITHUB_OUTPUT
+
       - uses: microsoft/setup-msbuild@v2
+
+      - name: Create commit metadata file
+        shell: bash
+        run: |
+          mkdir -p commit-info
+          cat > commit-info/commit.txt << EOF
+          Repository: ${{ env.UPSTREAM_REPO }}
+          Branch: ${{ env.UPSTREAM_BRANCH }}
+          Commit: ${{ steps.commit.outputs.sha }}
+          Message: ${{ steps.commit.outputs.msg }}
+          Built: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          Build: ${{ github.run_number }}
+          EOF
 
       - name: Build Release x64
         shell: cmd
@@ -30,11 +53,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: OptiScaler-x64
+          name: OptiScaler-x64-${{ steps.commit.outputs.sha }}
           path: |
             x64\Release\a\*
             x64\Release\*.dll
             x64\Release\*.pdb
+            commit-info\*
           compression-level: 9
 
   release:
@@ -57,10 +81,12 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly-${{ github.run_number }}
-          name: OptiScaler Nightly Build #${{ github.run_number }}
+          name: OptiScaler Nightly Build (${{ needs.build.outputs.commit_sha }})
           body: |
-            Auto-built from ${{ env.UPSTREAM_REPO }} (${{ env.UPSTREAM_BRANCH }})
-            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            **Repository:** ${{ env.UPSTREAM_REPO }} (${{ env.UPSTREAM_BRANCH }})
+            **Commit:** `${{ needs.build.outputs.commit_sha }}`
+            **Message:** ${{ needs.build.outputs.commit_msg }}
+            **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           files: "*.zip"
           make_latest: true
           fail_on_unmatched_files: false
