@@ -8,78 +8,51 @@ on:
     branches: [main, master]
 
 env:
-  REPO: optiscaler/OptiScaler
-  BRANCH: master
+  UPSTREAM_REPO: optiscaler/OptiScaler
+  UPSTREAM_BRANCH: master
 
 jobs:
-  check-commits:
-    runs-on: ubuntu-latest
-    outputs:
-    outputs:
-      should_build: ${{ steps.check.outputs.should_build }}
-    steps:
-      - name: Check last built commit
-        id: check
-        run: |
-          LAST_BUILT_SHA=$(curl -s "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?per_page=1" | jq -r '.artifacts[0].workflow_run.head_sha // "none"')
-          LATEST_SHA=$(curl -s "https://api.github.com/repos/${{ env.REPO }}/branches/${{ env.BRANCH }}" | jq -r '.commit.sha')
-          echo "Last built: $LAST_BUILT_SHA"
-          echo "Latest:     $LATEST_SHA"
-          if [ "$LAST_BUILT_SHA" = "none" ] || [ "$LATEST_SHA" != "$LAST_BUILT_SHA" ]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "commit_sha=$LATEST_SHA" >> $GITHUB_OUTPUT
-          else
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          fi
-
   build:
-    needs: check-commits
-    if: ${{ needs.check-commits.outputs.should_build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
     runs-on: windows-latest
     strategy:
       matrix:
-        arch: [x64, Win32]
-        config: [Release]
         include:
-          - arch: x64
-            platform: x64
-          - arch: Win32
-            platform: x86
+          - platform: x64
+            msbuild_platform: x64
+          - platform: x86
+            msbuild_platform: Win32
 
     steps:
-      - name: Checkout OptiScaler
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          repository: ${{ env.REPO }}
-          ref: ${{ env.BRANCH }}
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_BRANCH }}
           submodules: recursive
+          fetch-depth: 0
 
-      - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
+      - uses: microsoft/setup-msbuild@v2
 
-      - name: Build ${{ matrix.config }} ${{ matrix.platform }}
-        run: |
-          msbuild OptiScaler.sln /p:Configuration=${{ matrix.config }} /p:Platform=${{ matrix.arch }} /m
+      - name: Build Release ${{ matrix.platform }}
+        shell: cmd
+        run: msbuild OptiScaler.sln /p:Configuration=Release /p:Platform=${{ matrix.msbuild_platform }} /m
 
-      - name: Upload artifacts (${{ matrix.platform }})
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: OptiScaler-${{ matrix.platform }}-${{ matrix.config }}
-          path: |
-            OptiScaler\bin\${{ matrix.platform }}-${{ matrix.config }}\*
+          name: OptiScaler-${{ matrix.platform }}
+          path: OptiScaler\bin\${{ matrix.platform }}-Release\*
           compression-level: 9
 
-  create-release:
-    needs: [check-commits, build]
-    if: always() && (needs.build.result == 'success')
+  release:
+    needs: build
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
 
-      - name: Create ZIP packages
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Package artifacts
         shell: bash
         run: |
           for dir in */; do
@@ -87,20 +60,13 @@ jobs:
             zip -r "${dir}.zip" "$dir"
           done
 
-      - name: Generate release tag
-        id: tag
-        run: |
-          echo "tag=build-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: OptiScaler Build ${{ steps.tag.outputs.tag }}
+          tag_name: nightly-${{ github.run_number }}
+          name: OptiScaler Nightly Build #${{ github.run_number }}
           body: |
-            Auto-build from ${{ env.REPO }} @ ${{ env.BRANCH }}
-            Commit: ${{ needs.check-commits.outputs.commit_sha || github.sha }}
-          files: |
-            *.zip
+            Auto-built from ${{ env.UPSTREAM_REPO }} (${{ env.UPSTREAM_BRANCH }})
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          files: "*.zip"
           make_latest: true
           fail_on_unmatched_files: false
